@@ -39,17 +39,6 @@
       right: 0;
       text-align: center;
     }
-
-    .cat {
-      background: url('https://media.tenor.com/WjrBRpg1_7cAAAAi/peach-goma.gif');
-      background-repeat: no-repeat;
-      height: 300px;
-      width: 300px;
-      left: -3000px;
-      transform: scale(0.25);
-      position: absolute;
-      z-index: 10;
-    }
   </style>
   <script src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.min.js'></script>
 </head>
@@ -58,7 +47,7 @@
   <div class="toast-container position-fixed top-0 p-3">
     <div id="mytoast" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
       <div class="toast-body">
-        Data copied into the clipboard!
+        Data sent to DB!
       </div>
     </div>
   </div>
@@ -67,13 +56,12 @@
     <canvas id='canvasEdit' class='canvasFixed'></canvas>
     <canvas id='canvasOpacity' class='canvasFixed'></canvas>
     <canvas id='canvasMerged'></canvas>
-    <!-- <div class='cat-container' style='width: 200px;'> -->
-    <!--   <div class='cat' id='cat'></div> -->
-    <!-- </div> -->
-    <!-- <canvas id='canvasOutput'></canvas> -->
   </div>
   <script>
-    let url = 'http://localhost:3001/test.pdf';
+    const ENDPOINT = 'http://localhost:3000/documents';
+
+
+    let url = new URL(prompt("Document URL"));
     let canvasEdit = undefined, contextEdit = undefined;
     let canvasOpacity = undefined, contextOpacity = undefined;
     let canvasMerged = undefined, contextMerged = undefined;
@@ -84,7 +72,13 @@
     const strokeSize = 5;
     let totalWidth = 0;
     let totalHeight = 0;
-    window.addEventListener('load', function () {
+    window.addEventListener('load', async function () {
+
+      //let url = 'https://csunibo.github.io/sistemi-operativi/prove/scritto/scritto-1999-06-08-testo.pdf';
+      const filename = url.toString().substring(url.toString().lastIndexOf('/') + 1);
+      const dir = url.pathname.replace(`/${filename}`, '').substring(1);
+      id = await sha256(dir + "/" + filename);
+      console.log(dir, filename, id);
 
       document.getElementById('exportBtn').addEventListener('click', exportData);
 
@@ -299,7 +293,7 @@
         return {x, y};
       }
 
-      var loadingTask = pdfjsLib.getDocument(url);
+      var loadingTask = pdfjsLib.getDocument(url.toString());
       loadingTask.promise.then(async (pdf) => {
 
         // you can now use *pdf* here
@@ -353,8 +347,7 @@
     async function exportData(e) {
       e.stopPropagation();
       e.preventDefault();
-      const doc = prompt("Insert the document id");
-      let data = {document: doc, coords: []};
+      let data = {id, coords: []};
       for (let i = 0; i < lines[0].length; i++) {
         if (lines[0][i] && lines[1][i]) {
           let s = parseInt(lines[0][i]), e = parseInt(lines[1][i]);
@@ -367,11 +360,8 @@
 
       data.coords.sort((a, b) => a[0] - b[0]);
 
-      navigator.clipboard.writeText(JSON.stringify(data));
 
-      $('.toast').toast('show');
-
-      let res = await (await fetch('http://localhost:3000/documents', {
+      let res = await (await fetch(ENDPOINT, {
         headers: {
           'Content-Type': 'application/json'
         },
@@ -379,6 +369,17 @@
         method: 'PUT',
         credentials: 'include'
       })).json();
+      $('.toast').toast('show');
+    }
+
+    async function sha256(string) {
+      const utf8 = new TextEncoder().encode(string);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', utf8);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      const hashHex = hashArray
+        .map((bytes) => bytes.toString(16).padStart(2, '0'))
+        .join('');
+      return hashHex;
     }
   </script>
 
