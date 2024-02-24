@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang='en'>
+
+<head>
+  <meta charset='UTF-8'>
+  <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+
+  <title>
+    PDF cutter
+  </title>
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.3.1/dist/css/bootstrap.min.css"
+    integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous">
+  <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js"
+    integrity="sha384-q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo"
+    crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/popper.js@1.14.7/dist/umd/popper.min.js"
+    integrity="sha384-UO2eT0CpHqdSJQ6hJty5KVphtPhzWj9WO1clHTMGa3JDZwrnQq4sF86dIHNDz0W1"
+    crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.3.1/dist/js/bootstrap.min.js"
+    integrity="sha384-JjSmVgyd0p3pXB1rRibZUAYoIIy6OrQ6VrjIEaFf/nJGzIxFDsf4x0xIM+B07jRM"
+    crossorigin="anonymous"></script>
+
+  <style>
+    .fab {
+      position: fixed;
+      top: 90%;
+      left: 0;
+      right: 0;
+      text-align: center;
+    }
+
+    .canvasFixed {
+      position: absolute;
+      top: 0;
+      margin-left: auto;
+      margin-right: auto;
+      left: 0;
+      right: 0;
+      text-align: center;
+    }
+
+    .cat {
+      background: url('https://media.tenor.com/WjrBRpg1_7cAAAAi/peach-goma.gif');
+      background-repeat: no-repeat;
+      height: 300px;
+      width: 300px;
+      left: -3000px;
+      transform: scale(0.25);
+      position: absolute;
+      z-index: 10;
+    }
+  </style>
+  <script src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.min.js'></script>
+</head>
+
+<body>
+  <div class="toast-container position-fixed top-0 p-3">
+    <div id="mytoast" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
+      <div class="toast-body">
+        Data copied into the clipboard!
+      </div>
+    </div>
+  </div>
+
+  <div id='container' style='text-align: center'>
+    <canvas id='canvasEdit' class='canvasFixed'></canvas>
+    <canvas id='canvasOpacity' class='canvasFixed'></canvas>
+    <canvas id='canvasMerged'></canvas>
+    <!-- <div class='cat-container' style='width: 200px;'> -->
+    <!--   <div class='cat' id='cat'></div> -->
+    <!-- </div> -->
+    <!-- <canvas id='canvasOutput'></canvas> -->
+  </div>
+  <script>
+    let url = 'http://localhost:3001/test.pdf';
+    let canvasEdit = undefined, contextEdit = undefined;
+    let canvasOpacity = undefined, contextOpacity = undefined;
+    let canvasMerged = undefined, contextMerged = undefined;
+    let pages = [];
+    let lines = [];
+    lines[0] = []; lines[1] = [];
+    let current = 0;
+    const strokeSize = 5;
+    let totalWidth = 0;
+    let totalHeight = 0;
+    window.addEventListener('load', function () {
+
+      document.getElementById('exportBtn').addEventListener('click', exportData);
+
+      // disable right click
+      document.addEventListener('contextmenu', event => event.preventDefault());
+
+      canvasEdit = document.getElementById('canvasEdit');
+      contextEdit = canvasEdit.getContext('2d');
+      canvasOpacity = document.getElementById('canvasOpacity');
+      contextOpacity = canvasOpacity.getContext('2d');
+      canvasMerged = document.getElementById('canvasMerged');
+      contextMerged = canvasMerged.getContext('2d');
+      contextOpacity.globalAlpha = 0.2;
+      let lastEvent = {};
+      let lastEventMovingArea = {};
+      let lastY = 0;
+      let initialScrollTop = undefined;
+
+      // document.documentElement.addEventListener('mousedown', ev_mousedown);
+      document.getElementById('canvasOpacity').addEventListener('mousedown', ev_mousedown);
+
+      document.addEventListener('mousemove', ev_mousemove);
+      document.addEventListener('scroll', fireLastMouseEvent);
+
+      // called in scroll event
+      function fireLastMouseEvent(ev) {
+        // if (initialScrollTop == undefined)
+        if (current === 0)
+          initialScrollTop = window.scrollY;
+        let x = ev.pageX;
+        let y = ev.pageY;
+        lastEventMovingArea = {clientX: x, clientY: lastY + window.scrollY - initialScrollTop};
+        if (lastEventMovingArea)
+          document.dispatchEvent(new MouseEvent('mousemove', lastEventMovingArea));
+      }
+
+      // mousemove event handler.
+      function ev_mousemove(ev) {
+        if (current === 0)
+          return;
+
+        const previous_evt = lastEventMovingArea || {};
+        const was_offscreen = previous_evt.offscreen;
+
+        // only for 'true' mouse event
+        if (ev.isTrusted) {
+          // store the clientX and clientY props in an object
+          const {clientX, clientY} = ev;
+          lastEventMovingArea = {clientX, clientY};
+        }
+
+        // get the relative x and y positions from the mouse event
+        let point = getRelativePointFromEvent(ev, canvasOpacity);
+        if (!ev.isTrusted)
+          point = {x: ev.clientX, y: ev.clientY};
+        contextOpacity.beginPath();
+
+        redrawAllOpaqueSections();
+        contextOpacity.clearRect(0, 0, canvasOpacity.width, canvasOpacity.height);
+        if (lastY < point.y)
+          contextOpacity.rect(0, lastY, canvasOpacity.width, Math.abs(lastY - point.y));
+        else
+          contextOpacity.rect(0, point.y, canvasOpacity.width, Math.abs(lastY - point.y));
+
+        contextOpacity.fillStyle = 'rgba(255,255,255,0.5)';
+        contextOpacity.fill();
+        // document.getElementById('cat').style.top = `${point.y - 180}px`;
+      }
+
+      function getY(ev) {
+        const previous_evt = lastEvent || {};
+        const was_offscreen = previous_evt.offscreen;
+
+        // get the relative x and y positions from the mouse event
+        const point = getRelativePointFromEvent(ev, canvasEdit);
+
+        // check if we are out of the canvasEdit viewPort
+        if (point.x < 0 || point.y < 0 || point.x > canvasEdit.width || point.y > canvasEdit.height) {
+          // remember we were
+          lastEvent.offscreen = true;
+          // if we were already, don't draw
+          if (was_offscreen) {return;}
+        }
+        // we come from out-of-screen to in-screen
+        else if (was_offscreen) {
+          // move to the previous point recorded as out-of-screen
+          const previous_point = getRelativePointFromEvent(previous_evt, canvasEdit);
+        }
+
+        return point.y;
+      }
+
+      // check whether exists a section(s) containing the given y
+      function existsInLines(y) {
+        let secs = []
+        for (let i = lines[0].length - 1; i >= 0; i--) {
+          if ((lines[0][i] >= y && lines[1][i] <= y) || (lines[1][i] >= y && lines[0][i] <= y)) {
+            secs.push(i);
+          }
+        }
+        return secs;
+      }
+
+      // check whether exists a section in the section defined by idx
+      function checkInsideLines(idx) {
+        let secs = []
+        let y1 = lines[0][idx];
+        let y2 = lines[1][idx];
+        for (let i = lines[0].length - 1; i >= 0; i--) {
+          if (i != idx && ((lines[0][i] > y1 && lines[1][i] < y2) || (lines[0][i] > y2 && lines[1][i] < y1))) {
+            secs.push(i);
+          }
+        }
+        return secs;
+      }
+
+      function clearSections(idxs) {
+        for (idx of idxs) {
+          contextEdit.clearRect(0, lines[0][idx] - strokeSize, totalWidth, strokeSize * 2);
+          contextEdit.clearRect(0, lines[1][idx] - strokeSize, totalWidth, strokeSize * 2);
+          if (lines[0][idx] < lines[1][idx])
+            contextOpacity.clearRect(0, lines[0][idx], canvasOpacity.width, lines[1][idx] - lines[0][idx]);
+          else
+            contextOpacity.clearRect(0, lines[1][idx], canvasOpacity.width, lines[0][idx] - lines[1][idx]);
+          lines[0].splice(lines[0].indexOf(lines[0][idx]), 1);
+          lines[1].splice(lines[1].indexOf(lines[1][idx]), 1);
+        }
+      }
+
+      function redrawAllOpaqueSections() {
+        contextOpacity.beginPath();
+        contextOpacity.clearRect(0, 0, canvasOpacity.width, canvasOpacity.height);
+        for (let i = 0; i < lines[0].length; i++) {
+          let y1 = lines[0][i];
+          let y2 = lines[1][i];
+          let size = Math.abs(y1 - y2);
+          if (y1 < y2) {
+            contextOpacity.rect(0, y1, canvasOpacity.width, size);
+          }
+          else {
+            contextOpacity.rect(0, y2, canvasOpacity.width, size);
+          }
+        }
+        contextOpacity.fillStyle = 'rgba(255,255,255,0.5)';
+        contextOpacity.fill();
+      }
+
+      function merge() {
+        canvasMerged.width = totalWidth;
+        canvasMerged.height = totalHeight;
+        let newDY = 0;
+        for (let i = 0; i < pages.length; i++) {
+          let c = document.getElementById(`canvas-${i}`);
+          if (c) {
+            let ctx = c.getContext('2d');
+            newDY += document?.getElementById(`canvas-${i - 1}`)?.height || 0;
+            contextMerged.drawImage(c, 0, newDY);
+          }
+        }
+        for (let i = 0; i < pages.length; i++) {
+          document.getElementById(`canvas-${i}`).remove();
+        }
+      }
+
+      function ev_mousedown(ev) {
+        let y = getY(ev);
+        if (ev.buttons == 1) {
+          let idx = existsInLines(y);
+          if (idx.length > 0)
+            return;
+          contextEdit.beginPath();
+
+          contextEdit.lineWidth = strokeSize;
+          contextEdit.lineCap = 'round';
+          if (current == 0)
+            contextEdit.strokeStyle = '#008000';
+          else
+            contextEdit.strokeStyle = '#8B0000';
+          contextEdit.moveTo(0, y);
+          contextEdit.lineTo(totalWidth, y);
+          contextEdit.stroke();
+
+          if (!lines[current].includes(y))
+            lines[current].push(y);
+          // closing section
+          if (current === 1) {
+            let idx = checkInsideLines(lines[0].length - 1)
+            if (idx.length > 0)
+              clearSections(idx);
+            redrawAllOpaqueSections();
+            // document.getElementById('cat').style.top = `${y - 180}px`;
+          } else
+            lastY = y;
+          current = 1 - current;
+
+        } else if (ev.buttons == 2) {
+          if (lines[current].length == 0)
+            return;
+          let idx = existsInLines(y);
+          if (idx.length > 0)
+            clearSections(idx);
+        }
+      }
+
+      function getRelativePointFromEvent(ev, elem) {
+        // first find the bounding rect of the element
+        const bbox = elem.getBoundingClientRect();
+        // subtract the bounding rect from the client coords
+        const x = ev.clientX - bbox.left;
+        const y = ev.clientY - bbox.top;
+
+        return {x, y};
+      }
+
+      var loadingTask = pdfjsLib.getDocument(url);
+      loadingTask.promise.then(async (pdf) => {
+
+        // you can now use *pdf* here
+        for (let i = 1; i <= pdf.numPages; i++) {
+          let page = await pdf.getPage(i);
+          await elaboratePage(page);
+        }
+
+        canvasEdit.width = totalWidth;
+        canvasEdit.height = totalHeight;
+        canvasOpacity.width = totalWidth;
+        canvasOpacity.height = totalHeight;
+        // document.getElementById('cat').style.left = `${totalWidth - 100}px`;
+
+        merge();
+      });
+    });
+
+    async function elaboratePage(page) {
+      // you can now use *page* here
+      var scale = 1;
+      var viewport = page.getViewport({scale: scale, });
+      // Support HiDPI-screens.
+      // var outputScale = window.devicePixelRatio || 1;
+      var outputScale = 1;
+
+
+      let canvas = document.createElement('canvas');
+      canvas.setAttribute('id', `canvas-${page._pageIndex}`);
+      let ctx = canvas.getContext('2d');
+      document.getElementById('container').appendChild(canvas);
+      canvas.width = Math.floor(viewport.width * outputScale);
+      canvas.height = Math.floor(viewport.height * outputScale);
+      canvas.style.width = Math.floor(viewport.width) + 'px'; // canvas.style.height = Math.floor(viewport.height) + 'px';
+      totalWidth = canvas.width;
+      totalHeight += canvas.height;
+
+      var transform = outputScale !== 1
+        ? [outputScale, 0, 0, outputScale, 0, 0]
+        : null;
+
+      var renderContext = {
+        canvasContext: ctx,
+        transform: transform,
+        viewport: viewport
+      };
+      await page.render(renderContext).promise;
+      pages.push(page);
+    }
+
+    async function exportData(e) {
+      e.stopPropagation();
+      e.preventDefault();
+      const doc = prompt("Insert the document id");
+      let data = {document: doc, coords: []};
+      for (let i = 0; i < lines[0].length; i++) {
+        if (lines[0][i] && lines[1][i]) {
+          let s = parseInt(lines[0][i]), e = parseInt(lines[1][i]);
+          if (s < e)
+            data.coords.push({start: s, end: e});
+          else
+            data.coords.push({start: e, end: s});
+        }
+      }
+
+      data.coords.sort((a, b) => a[0] - b[0]);
+
+      navigator.clipboard.writeText(JSON.stringify(data));
+
+      $('.toast').toast('show');
+
+      let res = await (await fetch('http://localhost:3000/documents', {
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(data),
+        method: 'PUT',
+        credentials: 'include'
+      })).json();
+    }
+  </script>
+
+  <div class="fab">
+    <button type="button" class="btn btn-primary" id="exportBtn">export</button>
+  </div>
+
+
+
+</body>
+
+</html>
